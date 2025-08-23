@@ -18,6 +18,12 @@ MODEL_PATH = "final_hazard_detector_3class_resaved.keras"
 try:
     model = load_model(MODEL_PATH)
     MODEL_READY = True
+
+    # 🔹 Warm-up model (to avoid long first prediction timeouts)
+    dummy_input = np.zeros((1, 224, 224, 3), dtype=np.float32)
+    _ = model.predict(dummy_input)
+    print("✅ Model loaded and warmed up!")
+
 except Exception as e:
     model = None
     MODEL_READY = False
@@ -81,12 +87,21 @@ async def predict(file: UploadFile = File(...)) -> Dict[str, Any]:
 
     try:
         content = await file.read()
+        print(f"📂 Received file: {file.filename}, size: {len(content)} bytes")
+
         img = Image.open(BytesIO(content))
     except Exception as e:
+        print("❌ Image open failed:", e)
         raise HTTPException(status_code=400, detail=f"Invalid image: {e}")
 
-    x = preprocess_image(img)
-    preds = model.predict(x)
+    try:
+        x = preprocess_image(img)
+        preds = model.predict(x)
+        print("✅ Prediction complete")
+    except Exception as e:
+        print("❌ Model prediction error:", e)
+        raise HTTPException(status_code=500, detail=f"Model prediction failed: {e}")
+
     probs = preds[0].astype(float)
     idx = int(np.argmax(probs))
 
@@ -103,5 +118,13 @@ async def predict(file: UploadFile = File(...)) -> Dict[str, Any]:
 # ==========================
 if __name__ == "__main__":
     import uvicorn
-    port = int(os.environ.get("PORT", 8000))  # Render sets PORT
-    uvicorn.run("api:app", host="0.0.0.0", port=port, reload=True)
+    port = int(os.environ.get("PORT", 8000))  # Default to 8000 if not set
+
+    # Detect if we are being launched directly (python api.py)
+    # In that case, don't enable reload to avoid double-start/shutdown issues
+    uvicorn.run(
+        "api:app",
+        host="0.0.0.0",
+        port=port,
+        reload=False  # disable reload when run directly
+    )
